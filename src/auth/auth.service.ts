@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service.js';
@@ -24,6 +25,8 @@ type SocialProfile = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   private readonly googleClient = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
   );
@@ -367,7 +370,12 @@ export class AuthService {
     return { message: 'Reset link sent' };
   }
   async resetPassword(dto: ResetPasswordDto) {
+    this.logger.debug(
+      `[resetPassword] incoming token=${dto.token?.slice(0, 8) ?? 'undefined'}... passwordProvided=${typeof dto.password === 'string'} passwordLength=${dto.password?.length ?? 0}`,
+    );
+
     if (!dto.password || typeof dto.password !== 'string') {
+      this.logger.warn('[resetPassword] invalid password payload');
       throw new BadRequestException('Password phải là string hợp lệ');
     }
 
@@ -376,25 +384,38 @@ export class AuthService {
       include: { User: true },
     });
 
+    this.logger.debug(
+      `[resetPassword] token lookup result found=${!!record} type=${record?.type ?? 'N/A'} expiresAt=${record?.expiresAt?.toISOString?.() ?? 'N/A'} userId=${record?.user_id ?? 'N/A'}`,
+    );
+
     if (!record || record.type !== 'RESET') {
+      this.logger.warn('[resetPassword] token invalid or wrong type');
       throw new BadRequestException('Token không hợp lệ');
     }
 
     if (record.expiresAt && record.expiresAt < new Date()) {
+      this.logger.warn('[resetPassword] token expired');
       throw new BadRequestException('Token đã hết hạn');
     }
 
     const hashed = await bcrypt.hash(dto.password, 10);
+    this.logger.debug('[resetPassword] password hashed successfully');
 
     await this.prisma.user.update({
       where: { user_id: record.user_id },
       data: { password: hashed },
     });
+    this.logger.debug(
+      `[resetPassword] updated password for userId=${record.user_id}`,
+    );
 
     // Delete reset token after use
     await this.prisma.token.delete({
       where: { token_id: record.token_id },
     });
+    this.logger.debug(
+      `[resetPassword] deleted tokenId=${record.token_id} after successful reset`,
+    );
 
     return { message: 'Password reset successful' };
   }
