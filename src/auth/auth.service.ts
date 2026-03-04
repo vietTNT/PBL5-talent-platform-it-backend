@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service.js';
@@ -16,8 +17,16 @@ import { randomUUID } from 'crypto';
 import { MailsService } from '../mails/mails.service.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
 
+type SocialProfile = {
+  email: string;
+  fullName: string;
+  avatar: string;
+};
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   private readonly googleClient = new OAuth2Client(
     process.env.GOOGLE_CLIENT_ID,
   );
@@ -56,7 +65,6 @@ export class AuthService {
       expiresIn: '7d',
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     await this.prisma.token.create({
       data: {
         user_id: user.user_id,
@@ -115,7 +123,6 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const storedToken = await this.prisma.token.findUnique({
       where: { token: refreshToken },
       include: { User: true },
@@ -149,7 +156,6 @@ export class AuthService {
   }
 
   async logout(refreshToken: string) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     await this.prisma.token.deleteMany({
       where: { token: refreshToken },
     });
@@ -178,18 +184,120 @@ export class AuthService {
     const fullName = googlePayload.name || '';
     const avatar = googlePayload.picture || '';
 
-    // Tim user
+    return this.socialLogin(email, fullName, avatar, 'Google');
+  }
+
+  async githubLogin(accessToken: string) {
+    const githubProfileResponse = await fetch('https://api.github.com/user', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'nestjs-auth-service',
+      },
+    });
+
+    if (!githubProfileResponse.ok) {
+      throw new ForbiddenException('Github access token invalid');
+    }
+
+    const githubProfile = (await githubProfileResponse.json()) as Partial<{
+      email: string;
+      name: string;
+      avatar_url: string;
+    }>;
+
+    let email = githubProfile.email || '';
+    const fullName = githubProfile.name || '';
+    const avatar = githubProfile.avatar_url || '';
+
+    if (!email) {
+      const githubEmailResponse = await fetch(
+        'https://api.github.com/user/emails',
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'nestjs-auth-service',
+          },
+        },
+      );
+
+      if (!githubEmailResponse.ok) {
+        throw new ForbiddenException('Không lấy được email từ Github');
+      }
+
+      const emails = (await githubEmailResponse.json()) as
+        | Array<{ email: string; primary: boolean; verified: boolean }>
+        | undefined;
+
+      const selectedEmail =
+        emails?.find((item) => item.primary && item.verified)?.email ||
+        emails?.find((item) => item.verified)?.email ||
+        emails?.[0]?.email ||
+        '';
+
+      email = selectedEmail;
+    }
+
+    if (!email) {
+      throw new ForbiddenException('Github account không có email khả dụng');
+    }
+
+    return this.socialLogin(email, fullName, avatar, 'Github');
+  }
+
+  async facebookLogin(accessToken: string) {
+    const url = new URL('https://graph.facebook.com/me');
+    url.searchParams.set('fields', 'id,name,email,picture.type(large)');
+    url.searchParams.set('access_token', accessToken);
+
+    const facebookProfileResponse = await fetch(url.toString());
+
+    if (!facebookProfileResponse.ok) {
+      throw new ForbiddenException('Facebook access token invalid');
+    }
+
+    const facebookProfile = (await facebookProfileResponse.json()) as Partial<{
+      email: string;
+      name: string;
+      picture: { data?: { url?: string } };
+    }>;
+
+    const email = facebookProfile.email || '';
+    const fullName = facebookProfile.name || '';
+    const avatar = facebookProfile.picture?.data?.url || '';
+
+    if (!email) {
+      throw new ForbiddenException('Facebook account chưa cung cấp email');
+    }
+
+    return this.socialLogin(email, fullName, avatar, 'Facebook');
+  }
+
+  private async socialLogin(
+    email: string,
+    fullName: string,
+    avatar: string,
+    providerName: string,
+  ) {
+    const socialProfile: SocialProfile = {
+      email,
+      fullName,
+      avatar,
+    };
+
     let user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: socialProfile.email },
     });
 
     if (!user) {
       user = await this.prisma.user.create({
         data: {
-          email,
-          full_name: fullName,
-          user_image: avatar,
-          password: '', // Google login không cần password
+          email: socialProfile.email,
+          full_name:
+            socialProfile.fullName || socialProfile.email.split('@')[0] || '',
+          user_image: socialProfile.avatar,
+          password: '',
           role: 'SEEKER',
           is_active: true,
           registration_date: new Date(),
@@ -211,14 +319,16 @@ export class AuthService {
       secret: process.env.REFRESH_TOKEN_SECRET,
       expiresIn: '7d',
     });
+
     await this.prisma.token.create({
       data: {
         user_id: user.user_id,
         token: refreshToken,
       },
     });
+
     return {
-      message: 'Login with Google success',
+      message: `Login with ${providerName} success`,
       accessToken,
       refreshToken,
       user: {
@@ -240,16 +350,17 @@ export class AuthService {
     }
 
     const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 3600000); // 1 hour from now
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     await this.prisma.token.create({
       data: {
         token,
         user_id: user.user_id,
+        type: 'RESET',
+        expiresAt,
       },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     this.mailsService.sendForgotPassword(
       user.email,
       user.full_name || '',
@@ -259,36 +370,52 @@ export class AuthService {
     return { message: 'Reset link sent' };
   }
   async resetPassword(dto: ResetPasswordDto) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const record = await this.prisma.resetToken.findUnique({
+    this.logger.debug(
+      `[resetPassword] incoming token=${dto.token?.slice(0, 8) ?? 'undefined'}... passwordProvided=${typeof dto.password === 'string'} passwordLength=${dto.password?.length ?? 0}`,
+    );
+
+    if (!dto.password || typeof dto.password !== 'string') {
+      this.logger.warn('[resetPassword] invalid password payload');
+      throw new BadRequestException('Password phải là string hợp lệ');
+    }
+
+    const record = await this.prisma.token.findUnique({
       where: { token: dto.token },
       include: { User: true },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    if (!record || record.used) {
+    this.logger.debug(
+      `[resetPassword] token lookup result found=${!!record} type=${record?.type ?? 'N/A'} expiresAt=${record?.expiresAt?.toISOString?.() ?? 'N/A'} userId=${record?.user_id ?? 'N/A'}`,
+    );
+
+    if (!record || record.type !== 'RESET') {
+      this.logger.warn('[resetPassword] token invalid or wrong type');
       throw new BadRequestException('Token không hợp lệ');
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    if (record.expiresAt < new Date()) {
+    if (record.expiresAt && record.expiresAt < new Date()) {
+      this.logger.warn('[resetPassword] token expired');
       throw new BadRequestException('Token đã hết hạn');
     }
 
     const hashed = await bcrypt.hash(dto.password, 10);
+    this.logger.debug('[resetPassword] password hashed successfully');
 
     await this.prisma.user.update({
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       where: { user_id: record.user_id },
       data: { password: hashed },
     });
+    this.logger.debug(
+      `[resetPassword] updated password for userId=${record.user_id}`,
+    );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    await this.prisma.resetToken.update({
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-      where: { id: record.id },
-      data: { used: true },
+    // Delete reset token after use
+    await this.prisma.token.delete({
+      where: { token_id: record.token_id },
     });
+    this.logger.debug(
+      `[resetPassword] deleted tokenId=${record.token_id} after successful reset`,
+    );
 
     return { message: 'Password reset successful' };
   }
