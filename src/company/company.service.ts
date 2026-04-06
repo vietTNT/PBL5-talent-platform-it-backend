@@ -11,6 +11,8 @@ import { CloudinaryService } from '../upload/cloudinary.service.js';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 
+import { Express } from 'express';
+
 @Injectable()
 export class CompanyService {
   constructor(
