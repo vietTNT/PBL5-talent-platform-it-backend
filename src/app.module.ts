@@ -9,6 +9,7 @@ import { EmployeesModule } from './employees/employees.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { MessageModule } from './message/message.module.js';
 import { CompanyModule } from './company/company.module.js';
+import { FollowModule } from './follow/follow.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { CompanyModule } from './company/company.module.js';
     ChatModule,
     MessageModule,
     CompanyModule,
+    FollowModule,
   ],
   controllers: [AppController],
   providers: [AppService],
