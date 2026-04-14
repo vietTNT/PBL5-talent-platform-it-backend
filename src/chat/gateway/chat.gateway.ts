@@ -31,7 +31,7 @@ interface AuthenticatedSocket extends Socket {
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server: Server | undefined;
 
   private readonly logger = new Logger(ChatGateway.name);
   private connectedUsers = new Map<string, number>(); // socket.id -> user_id
@@ -42,8 +42,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {}
 
   //Log ra để biết đã connect hay disconnect, đồng thời lưu trữ user_id của client để sau này có thể kiểm tra quyền truy cập khi họ gửi tin nhắn hoặc tham gia chat
-  async handleConnection(client: AuthenticatedSocket) {
+  handleConnection(client: AuthenticatedSocket) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       const token = (client.handshake?.auth as any)?.token;
       this.logger.debug(
         `[CONNECT] Socket ${client.id} - Token present: ${!!token}`,
@@ -66,10 +67,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           `✅ [CONNECT] User ${decoded.sub} (${decoded.role}) - Socket: ${client.id}`,
         );
       } catch (err) {
-        this.logger.error(
-          `❌ [CONNECT] Invalid token - ${(err as any).message} - Socket: ${client.id}`,
+        const errorMsg = (err as any).message;
+        this.logger.warn(
+          `⚠️ [CONNECT] Token error (${errorMsg}) - Socket: ${client.id}`,
         );
-        client.disconnect();
+        // Allow connection but mark as unauthenticated
+        // Client can send 'auth:refresh' event to re-authenticate
+        client.userId = undefined;
+        client.userRole = undefined;
+        client.emit('auth:required', {
+          message: 'Token expired or invalid, please login again',
+        });
       }
     } catch (error) {
       this.logger.error(`[CONNECT] Unexpected error:`, error);
@@ -89,6 +97,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     data: { chatId: number; userId: number; userRole: string },
   ) {
     try {
+      // Check if user is authenticated
+      if (!client.userId || !client.userRole) {
+        this.logger.warn(
+          `⚠️ [JOIN] Unauthenticated socket attempt - Socket: ${client.id}`,
+        );
+        client.emit('error', { message: 'Vui lòng đăng nhập lại' });
+        return;
+      }
+
       if (!data.chatId || !data.userId) {
         this.logger.error(`[JOIN] Missing chatId or userId`);
         client.emit('error', { message: 'chatId và userId là bắt buộc' });
@@ -215,7 +232,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(
         `📤 [BROADCAST] Message ${msg.message_id} to chat:${payload.chat_id}`,
       );
-      this.server.to(`chat:${payload.chat_id}`).emit('message:new', msg);
+      if (this.server) {
+        this.server.to(`chat:${payload.chat_id}`).emit('message:new', msg);
+      }
     } catch (error) {
       this.logger.error('Error in handleSend:', error);
       client.emit('error', { message: 'Lỗi trong quá trình gửi tin nhắn' });
@@ -229,6 +248,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(
       `📤 [BROADCAST] REST API message ${message.message_id} to chat:${message.chat_id}`,
     );
-    this.server.to(`chat:${message.chat_id}`).emit('message:new', message);
+    if (this.server) {
+      this.server.to(`chat:${message.chat_id}`).emit('message:new', message);
+    }
   }
 }
