@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from './auth/auth.module.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -8,20 +9,30 @@ import { PrismaModule } from '../prisma/prisma.module.js';
 import { EmployeesModule } from './employees/employees.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { MessageModule } from './message/message.module.js';
+import { JobsModule } from './jobs/jobs.module.js';
+import { JobTypesModule } from './job-types/job-types.module.js';
+import { BookmarksModule } from './bookmarks/bookmarks.module.js';
+
 
 @Module({
   imports: [
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
     }),
+    MongooseModule.forRoot(
+      process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/it-job',
+    ),
     AuthModule,
     UsersModule,
     PrismaModule,
     EmployeesModule,
     ChatModule,
     MessageModule,
+    JobsModule,
+    JobTypesModule,
+    BookmarksModule,
+
   ],
   controllers: [AppController],
   providers: [AppService],
