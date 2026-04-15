@@ -6,6 +6,22 @@ export class FollowService {
   constructor(private prisma: PrismaService) {}
 
   async followCompany(company_id: number, seeker_id: number) {
+    // Verify Seeker exists
+    const seeker = await this.prisma.seeker.findUnique({
+      where: { seeker_id },
+    });
+    if (!seeker) {
+      throw new NotFoundException('Seeker not found');
+    }
+
+    // Verify Company exists
+    const company = await this.prisma.company.findUnique({
+      where: { company_id },
+    });
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
     return this.prisma.companyFollow.upsert({
       where: {
         seeker_id_company_id: {
@@ -38,9 +54,8 @@ export class FollowService {
       throw new NotFoundException('Follow not found');
     }
 
-    return this.prisma.companyFollow.update({
+    return this.prisma.companyFollow.delete({
       where: { follow_id: existing.follow_id },
-      data: { is_active: false },
     });
   }
 
@@ -68,5 +83,14 @@ export class FollowService {
     });
 
     return !!follow;
+  }
+
+  async getFollowCount(company_id: number) {
+    return this.prisma.companyFollow.count({
+      where: {
+        company_id,
+        is_active: true,
+      },
+    });
   }
 }
