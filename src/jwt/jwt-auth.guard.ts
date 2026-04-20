@@ -10,6 +10,11 @@ import { ExtractJwt } from 'passport-jwt';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private prisma: PrismaService) {
+    super();
+  }
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
   async canActivate(context: any): Promise<boolean> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const request = context.switchToHttp().getRequest();
