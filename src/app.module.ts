@@ -8,11 +8,14 @@ import { PrismaModule } from '../prisma/prisma.module.js';
 import { EmployeesModule } from './employees/employees.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { MessageModule } from './message/message.module.js';
+import { WebSocketModule } from './websocket/websocket.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { JobTypesModule } from './job-types/job-types.module.js';
 import { BookmarksModule } from './bookmarks/bookmarks.module.js';
+
 import { InterviewsModule } from './interviews/interviews.module.js';
 import { ApplicationsModule } from './applications/applications.module.js';
+import { AdminModule } from './admin/admin.module.js';
 
 @Module({
   imports: [
@@ -26,11 +29,13 @@ import { ApplicationsModule } from './applications/applications.module.js';
     EmployeesModule,
     ChatModule,
     MessageModule,
+    WebSocketModule,
     JobsModule,
     JobTypesModule,
     BookmarksModule,
     ApplicationsModule,
     InterviewsModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -9,6 +9,21 @@ import { CreateJobDto } from './dto/create-job.dto.js';
 import { SearchJobsQueryDto } from './dto/search-jobs.query.dto.js';
 import { UpdateJobDto } from './dto/update-job.dto.js';
 
+const KNOWN_TECH_KEYWORDS = [
+  'React',
+  'TypeScript',
+  'JavaScript',
+  'Node.js',
+  'NestJS',
+  'Python',
+  'Java',
+  'Go',
+  'PostgreSQL',
+  'Docker',
+  'AWS',
+  'Figma',
+];
+
 @Injectable()
 export class JobsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -48,9 +63,7 @@ export class JobsService {
 
     const employee = await this.getEmployeeProfile(actorUserId);
     if (employee.company_id !== dto.companyId) {
-      throw new ForbiddenException(
-        'Ban chi duoc tao job cho cong ty cua minh',
-      );
+      throw new ForbiddenException('Ban chi duoc tao job cho cong ty cua minh');
     }
 
     const salaryText = `${dto.salaryRange.min}-${dto.salaryRange.max}`;
@@ -167,10 +180,6 @@ export class JobsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
-    if (!keyword && !categoryKeyword && !locationKeyword && !salaryMinRaw) {
-      throw new BadRequestException('Thieu query tim kiem');
-    }
-
     const salaryMinValue = salaryMinRaw
       ? this.parseCurrencyToNumber(salaryMinRaw)
       : null;
@@ -190,6 +199,38 @@ export class JobsService {
         { job_description: { contains: keyword, mode: 'insensitive' } },
         { candidate_requirements: { contains: keyword, mode: 'insensitive' } },
         { work_location: { contains: keyword, mode: 'insensitive' } },
+        {
+          Company: {
+            is: {
+              company_name: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          Category: {
+            is: {
+              name: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          JobType: {
+            is: {
+              job_type: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          JobPostSkill: {
+            some: {
+              Skill: {
+                is: {
+                  skill_name: { contains: keyword, mode: 'insensitive' },
+                },
+              },
+            },
+          },
+        },
       ];
     }
 
@@ -201,7 +242,10 @@ export class JobsService {
         name: true,
         job_title: true,
         job_description: true,
+        candidate_requirements: true,
         work_location: true,
+        work_type: true,
+        level: true,
         salary: true,
         is_active: true,
         created_date: true,
@@ -224,6 +268,17 @@ export class JobsService {
             job_type: true,
           },
         },
+        JobPostSkill: {
+          select: {
+            Skill: {
+              select: {
+                skill_id: true,
+                skill_name: true,
+                skill_type: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -231,14 +286,26 @@ export class JobsService {
       const salaryRange = this.extractSalaryRange(job.salary);
       const categoryName = job.Category?.name ?? '';
       const location = job.work_location || job.Company?.city || '';
+      const skills = this.getJobSkills({
+        title: job.job_title || job.name,
+        description: job.job_description,
+        requirements: job.candidate_requirements,
+        categoryName,
+        jobTypeName: job.JobType?.job_type,
+        skillNames: job.JobPostSkill.map((item) => item.Skill.skill_name),
+      });
 
       return {
         id: job.job_post_id,
         title: job.job_title || job.name,
         description: job.job_description,
+        requirements: job.candidate_requirements,
         salary: job.salary,
         salaryRange,
         location,
+        workType: job.work_type,
+        level: job.level,
+        skills,
         isActive: job.is_active,
         createdDate: job.created_date,
         company: job.Company,
@@ -279,6 +346,38 @@ export class JobsService {
       ),
     ).sort((a, b) => a.localeCompare(b));
 
+    const jobTypeCounts = salaryFiltered.reduce((counts, job) => {
+      const value = this.normalizeEmploymentType(job.jobType?.job_type);
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>());
+
+    const jobTypes = ['Full-time', 'Contract', 'Part-time'].map((value) => ({
+      label: value,
+      value,
+      count: jobTypeCounts.get(value) ?? 0,
+    }));
+
+    const programmingLanguages = Array.from(
+      salaryFiltered
+        .reduce((counts, job) => {
+          const uniqueSkills = new Set(job.skills);
+
+          uniqueSkills.forEach((skill) => {
+            counts.set(skill, (counts.get(skill) ?? 0) + 1);
+          });
+
+          return counts;
+        }, new Map<string, number>())
+        .entries(),
+    )
+      .map(([value, count]) => ({
+        label: value,
+        value,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
     const categoryTerm = categoryKeyword?.toLowerCase();
     const locationTerm = locationKeyword?.toLowerCase();
 
@@ -302,9 +401,13 @@ export class JobsService {
         id: job.id,
         title: job.title,
         description: job.description,
+        requirements: job.requirements,
         salary: job.salary,
         salaryRange: job.salaryRange,
         location: job.location,
+        workType: job.workType,
+        level: job.level,
+        skills: job.skills,
         isActive: job.isActive,
         createdDate: job.createdDate,
         company: job.company,
@@ -315,6 +418,8 @@ export class JobsService {
       filters: {
         categories,
         locations,
+        jobTypes,
+        programmingLanguages,
       },
     };
   }
@@ -462,6 +567,52 @@ export class JobsService {
       min: Math.min(firstValue as number, secondValue as number),
       max: Math.max(firstValue as number, secondValue as number),
     };
+  }
+
+  private normalizeEmploymentType(jobType?: string | null) {
+    const normalized = jobType?.toLowerCase().replace(/[\s_-]+/g, '') ?? '';
+
+    if (normalized.includes('contract')) {
+      return 'Contract';
+    }
+
+    if (normalized.includes('part')) {
+      return 'Part-time';
+    }
+
+    return 'Full-time';
+  }
+
+  private getJobSkills(job: {
+    title: string;
+    description: string | null;
+    requirements: string | null;
+    categoryName: string;
+    jobTypeName?: string | null;
+    skillNames: string[];
+  }) {
+    const databaseSkills = Array.from(
+      new Set(job.skillNames.map((skill) => skill.trim()).filter(Boolean)),
+    );
+
+    if (databaseSkills.length > 0) {
+      return databaseSkills;
+    }
+
+    const source = [
+      job.title,
+      job.description,
+      job.requirements,
+      job.categoryName,
+      job.jobTypeName,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    return KNOWN_TECH_KEYWORDS.filter((skill) =>
+      source.includes(skill.toLowerCase()),
+    );
   }
 
   async updateJob(jobId: number, actorUserId: number, dto: UpdateJobDto) {
