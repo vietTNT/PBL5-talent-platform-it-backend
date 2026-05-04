@@ -624,4 +624,114 @@ export class AdminService {
   async banJobs(query: Partial<GetAdminJobsQueryDto> = {}) {
     return this.getJobs({ ...query, active: false });
   }
+
+  async activateUser(userId: number) {
+    const user = await this.prisma.user.update({
+      where: { user_id: userId },
+      data: { is_active: true },
+      select: {
+        user_id: true,
+        email: true,
+        full_name: true,
+        is_active: true,
+      },
+    });
+
+    return {
+      message: 'User activated',
+      user,
+    };
+  }
+
+  async deactivateUser(userId: number) {
+    const user = await this.prisma.user.update({
+      where: { user_id: userId },
+      data: { is_active: false },
+      select: {
+        user_id: true,
+        email: true,
+        full_name: true,
+        is_active: true,
+      },
+    });
+
+    return {
+      message: 'User deactivated',
+      user,
+    };
+  }
+
+  async activateCompany(companyId: number) {
+    const company = await this.prisma.company.update({
+      where: { company_id: companyId },
+      data: { is_active: true },
+      select: {
+        company_id: true,
+        company_name: true,
+        is_active: true,
+      },
+    });
+
+    return {
+      message: 'Company activated',
+      company,
+    };
+  }
+
+  async deactivateCompany(companyId: number) {
+    const [company] = await this.prisma.$transaction([
+      this.prisma.company.update({
+        where: { company_id: companyId },
+        data: { is_active: false },
+        select: {
+          company_id: true,
+          company_name: true,
+          is_active: true,
+        },
+      }),
+      this.prisma.jobPost.updateMany({
+        where: { company_id: companyId },
+        data: { is_active: false },
+      }),
+    ]);
+
+    return {
+      message: 'Company deactivated',
+      company,
+    };
+  }
+
+  async activateJob(jobId: number) {
+    const job = await this.prisma.jobPost.update({
+      where: { job_post_id: jobId },
+      data: { is_active: true },
+      select: {
+        job_post_id: true,
+        job_title: true,
+        is_active: true,
+      },
+    });
+
+    return {
+      message: 'Job activated',
+      job,
+    };
+  }
+
+  async deactivateJob(jobId: number) {
+    const job = await this.prisma.jobPost.update({
+      where: { job_post_id: jobId },
+      data: { is_active: false },
+      select: {
+        job_post_id: true,
+        job_title: true,
+        is_active: true,
+      },
+    });
+
+    return {
+      message: 'Job deactivated',
+      job,
+    };
+  }
 }

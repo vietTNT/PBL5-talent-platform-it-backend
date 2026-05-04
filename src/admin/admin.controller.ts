@@ -1,4 +1,12 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -188,5 +196,41 @@ export class AdminController {
   @Get('jobs/ban')
   banJobs(@Query() query: GetAdminJobsQueryDto) {
     return this.adminService.banJobs(query);
+  }
+
+  @ApiOperation({ summary: 'Kich hoat user theo ID (ADMIN)' })
+  @Patch('users/:id/activate')
+  activateUser(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.activateUser(id);
+  }
+
+  @ApiOperation({ summary: 'Vo hieu hoa user theo ID (ADMIN)' })
+  @Patch('users/:id/deactivate')
+  deactivateUser(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.deactivateUser(id);
+  }
+
+  @ApiOperation({ summary: 'Kich hoat company theo ID (ADMIN)' })
+  @Patch('companies/:id/activate')
+  activateCompany(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.activateCompany(id);
+  }
+
+  @ApiOperation({ summary: 'Vo hieu hoa company theo ID (ADMIN)' })
+  @Patch('companies/:id/deactivate')
+  deactivateCompany(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.deactivateCompany(id);
+  }
+
+  @ApiOperation({ summary: 'Kich hoat job theo ID (ADMIN)' })
+  @Patch('jobs/:id/activate')
+  activateJob(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.activateJob(id);
+  }
+
+  @ApiOperation({ summary: 'Vo hieu hoa job theo ID (ADMIN)' })
+  @Patch('jobs/:id/deactivate')
+  deactivateJob(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.deactivateJob(id);
   }
 }
