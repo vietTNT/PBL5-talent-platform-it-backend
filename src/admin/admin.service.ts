@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma.service.js';
 import { GetAdminCompaniesQueryDto } from './dto/get-admin-companies.query.dto.js';
 import { GetAdminStatisticsQueryDto } from './dto/get-admin-statistics.query.dto.js';
 import { GetAdminUsersQueryDto } from './dto/get-admin-users.query.dto.js';
+import { GetAdminJobsQueryDto } from './dto/get-admin-jobs.query.dto.js';
 
 type TimeBucket = {
   label: string;
@@ -51,7 +52,9 @@ export class AdminService {
         select: { registration_date: true },
       }),
       this.prisma.jobPost.findMany({
-        where: { created_date: { gte: chartStart } },
+        where: {
+          created_date: { gte: chartStart },
+        },
         select: { created_date: true },
       }),
       this.prisma.jobPostActivity.findMany({
@@ -395,5 +398,201 @@ export class AdminService {
     }
 
     return Math.round(value * 100) / 100;
+  }
+  async getJobs(query: GetAdminJobsQueryDto) {
+    const where: Prisma.JobPostWhereInput = {};
+    const search = query.search?.trim();
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy = query.sortBy ?? 'createdDate';
+    const sortOrder = query.sortOrder ?? 'desc';
+
+    // Build filters
+    if (search) {
+      where.OR = [
+        { job_title: { contains: search, mode: 'insensitive' } },
+        {
+          Company: { company_name: { contains: search, mode: 'insensitive' } },
+        },
+        { name: { contains: search, mode: 'insensitive' } },
+        { job_description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (query.industry) {
+      where.Company = {
+        company_industry: { contains: query.industry, mode: 'insensitive' },
+      };
+    }
+
+    if (query.level) {
+      where.level = { contains: query.level, mode: 'insensitive' };
+    }
+
+    if (query.categoryId) {
+      where.category_id = query.categoryId;
+    }
+
+    if (query.jobTypeId) {
+      where.job_type_id = query.jobTypeId;
+    }
+
+    if (typeof query.active === 'boolean') {
+      where.is_active = query.active;
+    }
+
+    // Salary filter - search in salary string format like "20,000,000 - 100,000,000"
+    if (query.minSalary) {
+      where.salary = {
+        contains: query.minSalary,
+        mode: 'insensitive',
+      };
+    }
+
+    // Deadline filters
+    if (query.deadlineFrom || query.deadlineTo) {
+      const deadlineFilter: Prisma.DateTimeFilter = {};
+
+      if (query.deadlineFrom) {
+        deadlineFilter.gte = new Date(query.deadlineFrom);
+      }
+
+      if (query.deadlineTo) {
+        deadlineFilter.lte = new Date(query.deadlineTo);
+      }
+
+      where.deadline = deadlineFilter;
+    }
+
+    // Build orderBy based on sortBy and sortOrder
+    const orderByMap: Record<string, Prisma.JobPostOrderByWithRelationInput> = {
+      createdDate: { created_date: sortOrder },
+      deadline: { deadline: sortOrder },
+      salary: { salary: sortOrder },
+      numberOfHires: { number_of_hires: sortOrder },
+      updatedDate: { updated_date: sortOrder },
+    };
+
+    const orderBy = orderByMap[sortBy] || { created_date: 'desc' };
+
+    const jobSelect = {
+      job_post_id: true,
+      job_title: true,
+      name: true,
+      job_description: true,
+      salary: true,
+      level: true,
+      experience: true,
+      education: true,
+      number_of_hires: true,
+      deadline: true,
+      work_location: true,
+      work_type: true,
+      is_active: true,
+      created_date: true,
+      updated_date: true,
+      Company: {
+        select: {
+          company_id: true,
+          company_name: true,
+          company_email: true,
+          company_image: true,
+          company_industry: true,
+          city: true,
+        },
+      },
+      Category: {
+        select: {
+          category_id: true,
+          name: true,
+        },
+      },
+      JobType: {
+        select: {
+          job_type_id: true,
+          job_type: true,
+        },
+      },
+      Employee: {
+        select: {
+          employee_id: true,
+          User: {
+            select: {
+              full_name: true,
+              email: true,
+            },
+          },
+        },
+      },
+      _count: {
+        select: {
+          JobPostActivity: true,
+        },
+      },
+    } as const;
+
+    type JobPayload = Prisma.JobPostGetPayload<{ select: typeof jobSelect }>;
+
+    const [jobs, total] = await Promise.all([
+      this.prisma.jobPost.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+        select: jobSelect,
+      }),
+      this.prisma.jobPost.count({ where }),
+    ]);
+
+    return {
+      jobs: jobs.map((job: JobPayload) => ({
+        id: job.job_post_id,
+        title: job.job_title,
+        name: job.name,
+        description: job.job_description,
+        salary: job.salary,
+        level: job.level,
+        experience: job.experience,
+        education: job.education,
+        numberOfHires: job.number_of_hires,
+        deadline: job.deadline,
+        workLocation: job.work_location,
+        workType: job.work_type,
+        applicationsCount: job._count.JobPostActivity,
+        isActive: job.is_active,
+        createdDate: job.created_date,
+        updatedDate: job.updated_date,
+        company: {
+          id: job.Company.company_id,
+          name: job.Company.company_name,
+          email: job.Company.company_email,
+          image: job.Company.company_image,
+          industry: job.Company.company_industry,
+          city: job.Company.city,
+        },
+        category: {
+          id: job.Category.category_id,
+          name: job.Category.name,
+        },
+        jobType: {
+          id: job.JobType.job_type_id,
+          name: job.JobType.job_type,
+        },
+        createdBy:
+          job.Employee && job.Employee.User
+            ? {
+                id: job.Employee.employee_id,
+                name: job.Employee.User.full_name,
+                email: job.Employee.User.email,
+              }
+            : null,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      sortBy,
+      sortOrder,
+    };
   }
 }
